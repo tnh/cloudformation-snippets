@@ -1,0 +1,58 @@
+---
+Description: Provides access credentials for the CI system
+
+Resources:
+  CIDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-ci-deploy"
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            AWS:
+            - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+        Version: '2012-10-17'
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - iam:AddRoleToInstanceProfile
+            - iam:AttachRolePolicy
+            - iam:CreateInstanceProfile
+            - iam:CreateRole
+            - iam:CreatePolicyVersion
+            - iam:DeleteInstanceProfile
+            - iam:DeletePolicy
+            - iam:DeletePolicyVersion
+            - iam:DeleteRole
+            - iam:DeleteRolePolicy
+            - iam:DetachRolePolicy
+            - iam:GetRole
+            - iam:GetPolicy
+            - iam:GetRolePolicy
+            - iam:ListInstanceProfiles
+            - iam:ListInstanceProfilesForRole
+            - iam:ListRoles
+            - iam:PassRole
+            - iam:PutRolePolicy
+            - iam:RemoveRoleFromInstanceProfile
+            - iam:UpdateAssumeRolePolicy
+            - iam:CreatePolicy
+            - iam:ListPolicyVersions
+            Effect: Allow
+            Resource: "*"
+          Version: '2012-10-17'
+        PolicyName: deployment
+
+
+Outputs:
+  DeployRoleARN:
+    Description: The Deploy Role ARN
+    Value: !GetAtt CIDeployRole.Arn
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", CIDeployRole]]
