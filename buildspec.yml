@@ -1,0 +1,26 @@
+version: 0.2
+
+env:
+  variables:
+    SOME_ENV_VAR: "/usr/bin/foo"
+  parameter-store:
+    LOGIN_PASSWORD: "FakeLoginPassword"
+
+phases:
+  install:
+    commands:
+      - echo Entered the install phase...
+      - apt-get update -y
+  pre_build:
+    commands:
+      - echo Entered the pre_build phase...
+      - aws --version
+  build:
+    commands:
+      - echo Entered the build phase...
+      - echo Build started on `date`
+      - aws cloudformation validate-template --template-body file://cloudformation/deployrole.yaml
+  post_build:
+    commands:
+      - echo Entered the post_build phase...
+      - echo Build completed on `date`
