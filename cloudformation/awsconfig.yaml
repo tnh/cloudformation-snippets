@@ -1,0 +1,287 @@
+Parameters:
+  CloudTrailS3Bucket:
+    Type: String
+    Description: The name of the S3 bucket to which you should be pushing CloudTrail
+      logs.
+
+
+Resources:
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: LogDeliveryWrite
+      Tags:
+      - Key: Owner
+        Value: AWS Account owner
+
+  ConfigRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Policies:
+        - PolicyName: !Join ['', [AWSConfigDeliveryPermissions-, !Ref 'AWS::Region']]
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Stmt1460390265000
+                Effect: Allow
+                Action:
+                  - config:Put*
+                Resource:
+                  - '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject*
+                  - s3:GetBucketAcl
+                Resource:
+                  - !Join [ '', [ !GetAtt ConfigBucket.Arn, "/*" ]]
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSConfigRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "config.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+
+  ConfigRecorder:
+    Type: "AWS::Config::ConfigurationRecorder"
+    Properties:
+      Name: default
+      RecordingGroup:
+        AllSupported: true
+        IncludeGlobalResourceTypes: true
+      RoleARN:
+        Fn::GetAtt:
+        - ConfigRole
+        - Arn
+
+  DeliveryChannel:
+    DependsOn:
+      - ConfigRole
+    Type: "AWS::Config::DeliveryChannel"
+    Properties:
+      ConfigSnapshotDeliveryProperties:
+        DeliveryFrequency: "Six_Hours"
+      S3BucketName:
+        Ref: ConfigBucket
+
+  CloudTrailEnabled:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      Source:
+        Owner: AWS
+        SourceIdentifier: CLOUD_TRAIL_ENABLED
+      InputParameters:
+        s3BucketName: !Ref 'CloudTrailS3Bucket'
+
+
+  CheckResourceTags:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigRecorder
+    Properties:
+      Description: Checks whether your resources have the tags that you specify in S3.
+      InputParameters:
+        tag1Key: Name
+        tag2Key: Owner
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+          - AWS::RDS::DBInstance
+          - AWS::RDS::DBSecurityGroup
+          - AWS::RDS::DBSnapshot
+          - AWS::RDS::DBSubnetGroup
+          - AWS::RDS::EventSubscription
+          - AWS::EC2::VPC
+          - AWS::EC2::InternetGateway
+          - AWS::EC2::Subnet
+          - AWS::EC2::VPNConnection
+          - AWS::EC2::VPNGateway
+          - AWS::EC2::NetworkAcl
+          - AWS::EC2::Instance
+          - AWS::EC2::SecurityGroup
+      Source:
+        Owner: AWS
+        SourceIdentifier: REQUIRED_TAGS
+
+
+  ConfigPermissionToCallCheckForMFAIAM:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !GetAtt CheckForMFAIAM.Arn
+      Action: "lambda:InvokeFunction"
+      Principal: "config.amazonaws.com"
+
+  CheckForMFAIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSConfigRulesExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+
+  RootUserMFAEnabledRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      Description: Checks whether the root user of your AWS account requires multi-factor
+        authentication for console sign-in.
+      InputParameters: {}
+      Scope: {}
+      Source:
+        Owner: AWS
+        SourceIdentifier: ROOT_ACCOUNT_MFA_ENABLED
+      MaximumExecutionFrequency: TwentyFour_Hours
+
+  IAMlocalUsersMustBeInAGroupRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      Description: Checks whether IAM users are members of at least one IAM group.
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::IAM::User
+      Source:
+        Owner: AWS
+        SourceIdentifier: IAM_USER_GROUP_MEMBERSHIP_CHECK
+
+  LocalIAMPasswordRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      Description: Checks whether the account password policy for IAM users meets
+        the specified requirements.
+      InputParameters:
+        RequireUppercaseCharacters: 2
+        RequireLowercaseCharacters:  2
+        RequireSymbols: 1
+        RequireNumbers: 1
+        MinimumPasswordLength: 8
+        PasswordReusePrevention: 5
+        MaxPasswordAge: 60
+      Scope: {}
+      Source:
+        Owner: AWS
+        SourceIdentifier: IAM_PASSWORD_POLICY
+      MaximumExecutionFrequency: TwentyFour_Hours
+
+  ConfigRuleForIAMMFA:
+    Type: "AWS::Config::ConfigRule"
+    Properties:
+      Description: "All local users must have MFA attached"
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::IAM::User
+      Source:
+        Owner: "CUSTOM_LAMBDA"
+        SourceDetails:
+          -
+            EventSource: "aws.config"
+            MessageType: "ConfigurationItemChangeNotification"
+        SourceIdentifier:
+          Fn::GetAtt:
+            - CheckForMFAIAM
+            - Arn
+    DependsOn: ConfigPermissionToCallCheckForMFAIAM
+
+
+  CheckForMFAIAM:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt CheckForMFAIAMRole.Arn
+      Runtime: nodejs4.3
+      Timeout: 60
+      Code:
+        ZipFile: >
+
+          var aws = require('aws-sdk');
+          var config = new aws.ConfigService();
+          var iam = new aws.IAM();
+
+          function checkDefined(reference, referenceName) {
+              if (!reference) {
+                  console.log("Error: " + referenceName + " is not defined");
+                  throw referenceName;
+              }
+              return reference;
+          }
+
+
+          function isApplicable(configurationItem, event){
+              checkDefined(configurationItem, "configurationItem");
+              checkDefined(event, "event");
+              var status = configurationItem.configurationItemStatus;
+              var eventLeftScope = event.eventLeftScope;
+              return ('OK' === status || 'ResourceDiscovered' === status) && false === eventLeftScope;
+          }
+
+
+          exports.handler = function(event, context) {
+              event = checkDefined(event, "event");
+              var invokingEvent = JSON.parse(event.invokingEvent);
+              var configurationItem = checkDefined(invokingEvent.configurationItem, "invokingEvent.configurationItem");
+              var putEvaluationsRequest = {};
+
+
+              if (configurationItem.resourceType === 'AWS::IAM::User') {
+
+                  iam.listMFADevices({ UserName: configurationItem.resourceName }, function(mfaerr, mfadata) {
+
+                      var ret = 'NON_COMPLIANT';
+
+              		if (!mfaerr) {
+
+              		    if (mfadata.MFADevices.length > 0) {
+
+                              ret = 'COMPLIANT';
+
+                          }
+
+              		} else {
+
+              		    console.log(mfaerr);
+
+              		}
+
+              		putEvaluationsRequest.Evaluations = [{
+              	        ComplianceResourceType: configurationItem.resourceType,
+              			ComplianceResourceId: configurationItem.resourceId,
+              			ComplianceType: ret,
+              			OrderingTimestamp: configurationItem.configurationItemCaptureTime
+              		}];
+
+              	    putEvaluationsRequest.ResultToken = event.resultToken;
+
+                      // Invoke the Config API to report the result of the evaluation
+                      config.putEvaluations(putEvaluationsRequest, function (err, data) {
+                  			if (err) {
+                  			    context.fail(err);
+                  			} else {
+                  			    context.succeed(data);
+                  			}
+                      });
+
+          	    });
+
+              } else {
+
+          	    putEvaluationsRequest.Evaluations = [ { ComplianceResourceType: configurationItem.resourceType, ComplianceResourceId: configurationItem.resourceId, ComplianceType: 'NOT_APPLICABLE', OrderingTimestamp: configurationItem.configurationItemCaptureTime } ];
+          	    putEvaluationsRequest.ResultToken = event.resultToken;
+
+          	    config.putEvaluations(putEvaluationsRequest, function (err, data) { if (err) { context.fail(err); } else { context.succeed(data); } });
+
+              }
+
+          };
