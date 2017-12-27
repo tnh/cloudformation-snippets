@@ -3,8 +3,8 @@ version: 0.2
 env:
   variables:
     SOME_ENV_VAR: "/usr/bin/foo"
-  parameter-store:
-    LOGIN_PASSWORD: "FakeLoginPassword"
+#  parameter-store:
+#    LOGIN_PASSWORD: "FakeLoginPassword"
 
 phases:
   install:
