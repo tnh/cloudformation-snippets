@@ -45,6 +45,7 @@ Resources:
                     - ec2:DescribeSubnets
                     - ec2:DescribeSecurityGroups
                     - ec2:DescribeVpcs
+                    - cloudformation:ValidateTemplate
                   Resource: '*'
                 - Effect: Allow
                   Action:
@@ -101,7 +102,7 @@ Resources:
         Source:
           Auth:
             Type: OAUTH
-            Resource: "dontknow" 
+            Resource: "dontknow"
           Location: https://github.com/tnh/cloudformation-snippets.git
           Type: GITHUB
         TimeoutInMinutes: 10
