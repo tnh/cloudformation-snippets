@@ -13,6 +13,7 @@ Resources:
           Principal:
             AWS:
             - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            - !Sub "arn:aws:iam::${AWS::AccountId}:role/buildkite-Role"
         Version: '2012-10-17'
       Path: "/"
       ManagedPolicyArns:
