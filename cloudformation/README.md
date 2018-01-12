@@ -6,3 +6,5 @@
 `buildkytesecrets.yaml` - a snippet to set up buildkite kms encrypted private keys   
 
 `awsconfig.yaml` - a snippet of aws config rules to bootstrap an account
+
+`codebuild.yaml` - a snippet of codebuild 
